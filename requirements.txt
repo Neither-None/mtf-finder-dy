@@ -1,1 +1,2 @@
-playwright>=1.40
+# 纯 Python 标准库即可运行（无需第三方包）
+# 唯一外部依赖：Node.js（用于本地计算 a_bogus 签名，见 README）

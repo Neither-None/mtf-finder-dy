@@ -29,25 +29,19 @@
 
 ## 安装
 
-需要 Python 3.9+。
+需要 **Python 3.9+** 和 **Node.js 16+**（签名要用）。
 
 ```bash
 git clone <this-repo>
 cd douyin-yaoniang
-
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# macOS / Linux:
-source .venv/bin/activate
-
-pip install -r requirements.txt
-python -m playwright install chromium
+# 不需要 pip install，纯标准库
+node -v      # 确认 Node 可用
 ```
 
-> 如果电脑上已有 Chrome/Chromium，可以跳过最后一步，运行时加
-> `--browser-path "C:\Program Files\Google\Chrome\Application\chrome.exe"`
-> （macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`）。
+签名模块 `abogus/` 已随仓库附带（Node 版 bdms 签名器），无需额外安装。
+
+> 完全不需要 Playwright / 浏览器 —— 现在走的是「cookie + 本地算签名 + 直接调接口」，
+> 比浏览器方案快 10 倍以上，也不会弹验证码。
 
 ---
 
@@ -136,17 +130,14 @@ csv 用 Excel 直接打开（UTF-8 BOM，不会乱码）。
 
 ---
 
-## 首次运行会遇到验证码（重要）
+## 原理（纯接口版）
 
-抖音会识别无头浏览器，第一次很可能跳到「验证码中间页」。处理办法：
+1. 用 cookie 调 `/aweme/v1/web/user/profile/self/` 拿到自己的 sec_uid
+2. 调 `/aweme/v1/web/user/following/list/` 翻页抓关注列表
+3. 每个请求的 `a_bogus` 由仓库自带的 Node 签名器本地计算（`abogus/sign.js`）
+4. 滚雪球：从已抓账号里挑「像药娘 + 关注多」的，继续抓他们的关注列表
 
-```bash
-python run_crawl.py --no-headless --max-expand 1
-```
-
-会弹出一个**可见的浏览器窗口**，在里面手动完成验证码（滑动/点选），
-过完脚本会自动继续，并且**验证结果保存在 `data/browser_profile/`**，
-之后再用无头模式跑就不会再跳验证码了。
+> 如果签名失效（抖音更新算法），接口会返回空数据，此时需要更新 `abogus/` 里的签名器。
 
 ## 常见问题
 
