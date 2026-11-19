@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+cookies/*.json
+!cookies/*.example.json
+*.log
