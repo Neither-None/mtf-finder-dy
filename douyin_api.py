@@ -100,23 +100,22 @@ class DouyinAPI:
         j = self.get("/aweme/v1/web/user/following/list/", params)
         return j
 
-    def followings_all(self, sec_user_id, pages=20, delay=(2, 4)):
-        """翻页抓取某个账号的全部关注"""
+    def followings_all(self, sec_user_id, pages=20, delay=(1.2, 2.4)):
+        """翻页抓取某个账号的全部关注（游标 = 上一页的 min_time）"""
         import random
-        out, max_time, offset = [], None, 0
+        out, max_time = [], None
         for p in range(pages):
-            j = self.followings(sec_user_id, offset=offset, max_time=max_time)
+            j = self.followings(sec_user_id, offset=0, max_time=max_time)
             batch = j.get("followings") or j.get("user_list") or []
             if not batch:
                 break
             out.extend(batch)
             if not j.get("has_more"):
                 break
-            new_max = j.get("max_time")
-            if new_max and new_max != max_time:
-                max_time = new_max
-            else:
-                offset += len(batch)
+            nxt = j.get("min_time")
+            if not nxt or nxt == max_time:
+                break
+            max_time = nxt
             time.sleep(random.uniform(*delay))
         return out
 
