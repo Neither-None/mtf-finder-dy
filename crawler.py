@@ -186,20 +186,81 @@ class DouyinCrawler:
 
     # ---------- 抓取 ----------
 
+    def click_follow_count(self, tries=5):
+        """点资料卡上的「关注 N」打开关注弹层，成功收到接口数据返回 True"""
+        for attempt in range(tries):
+            try:
+                cands = self.page.evaluate("""() => {
+                    const els = [...document.querySelectorAll('div,span,a,p')];
+                    let label = null, num = null;
+                    for (const e of els) {
+                        const t = (e.textContent || '').trim();
+                        const r = e.getBoundingClientRect();
+                        if (r.width <= 0 || r.height <= 0) continue;
+                        if (r.y < 50 || r.y > 300) continue;
+                        if (t === '关注' && e.children.length === 0 && !label) label = {x:r.x,y:r.y,w:r.width,h:r.height};
+                        if (!num && /^[0-9][0-9.]*(万)?$/.test(t) && e.children.length === 0 && label
+                            && Math.abs(r.y - label.y) < 30 && r.x > label.x) {
+                            num = {x:r.x,y:r.y,w:r.width,h:r.height};
+                        }
+                    }
+                    const out = [];
+                    if (num) out.push({x: num.x + num.w/2, y: num.y + num.h/2});
+                    if (label) {
+                        out.push({x: label.x + label.w + 15, y: label.y + label.h/2});
+                        out.push({x: label.x + label.w + 45, y: label.y + label.h/2});
+                        out.push({x: label.x + label.w/2, y: label.y + label.h/2});
+                    }
+                    return out;
+                }""")
+                for pos in cands:
+                    self.captured.clear()
+                    self.page.mouse.click(pos["x"], pos["y"])
+                    self.page.wait_for_timeout(2600)
+                    if self.captured:
+                        return True
+                # 点不到就稍微滚动页面再试
+                self.page.mouse.wheel(0, 200)
+                self.page.wait_for_timeout(1200)
+            except Exception as e:
+                self.log("  点关注异常：%s" % str(e)[:50])
+        return False
+
+    def scroll_modal(self, times=3):
+        """滚动关注弹层（找到弹层内部可滚动容器）"""
+        for _ in range(times):
+            try:
+                self.page.evaluate("""() => {
+                    const all = [...document.querySelectorAll('div')];
+                    let best = null, bestScore = 0;
+                    for (const e of all) {
+                        if (e.scrollHeight <= e.clientHeight + 40) continue;
+                        if (e.clientHeight < 200) continue;
+                        // 优先选择包含大量链接/头像的容器
+                        const score = e.querySelectorAll('a,img').length;
+                        if (score > bestScore) { bestScore = score; best = e; }
+                    }
+                    if (best) best.scrollTop = best.scrollHeight;
+                }""")
+                self.page.mouse.wheel(0, 2000)
+            except Exception:
+                pass
+            self.page.wait_for_timeout(random.randint(1500, 2500))
+
     def fetch_following(self, sec_uid=None, scrolls=3):
         """sec_uid 为 None 时抓自己的关注列表"""
         self.captured.clear()
-        if sec_uid:
-            url = "https://www.douyin.com/user/%s?showTab=following" % sec_uid
-        else:
-            url = "https://www.douyin.com/user/self?showTab=following"
-        if not self.goto(url):
+        url = ("https://www.douyin.com/user/%s" % sec_uid) if sec_uid else "https://www.douyin.com/user/self"
+        if not self.goto(url, wait=6000):
             return []
-        self.wait_captcha()
-        if not self.captured:
-            self.click_follow_tab()
-        users = self.harvest(scrolls=scrolls)
-        # 去重
+        if self.is_captcha():
+            self.wait_captcha()
+            self.goto(url, wait=6000)
+        opened = self.click_follow_count()
+        if not opened:
+            self.log("  弹层没打开，跳过")
+            return []
+        users = self.harvest(scrolls=max(2, scrolls))
         seen, out = set(), []
         for u in users:
             if u["id"] not in seen:

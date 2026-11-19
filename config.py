@@ -46,5 +46,5 @@ MENTAL = [
 ]
 
 # 抖音关注列表接口（抓响应即可，不需要自己签名）
-DOUYIN_FOLLOW_API = "/aweme/v1/web/following/list/"
-DOUYIN_FOLLOWER_API = "/aweme/v1/web/follower/list/"
+DOUYIN_FOLLOW_API = "following/list"   # 同时匹配 /aweme/v1/web/following/list/ 与 /user/following/list/
+DOUYIN_FOLLOWER_API = "follower/list"
