@@ -54,7 +54,8 @@ def extract_users(payload):
 
 
 class DouyinCrawler:
-    def __init__(self, cookie_path, headless=True, browser_path=None, log=print):
+    def __init__(self, cookie_path, headless=True, browser_path=None, log=print,
+                 profile_dir=None):
         if not os.path.exists(cookie_path):
             raise SystemExit(
                 "找不到 cookie 文件：%s\n"
@@ -69,22 +70,36 @@ class DouyinCrawler:
                 "把包括 sessionid 在内的所有 cookie 导出成 JSON（见 README）。"
             )
         self.log = log
+        self.headless = headless
         self.captured = []
         self.p = sync_playwright().start()
-        kw = dict(headless=headless, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        profile_dir = profile_dir or os.path.join(DATA, "browser_profile")
+        os.makedirs(profile_dir, exist_ok=True)
+        ARGS = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--lang=zh-CN",
+        ]
+        kw = dict(headless=headless, args=ARGS, user_data_dir=profile_dir,
+                  viewport={"width": 1440, "height": 900},
+                  locale="zh-CN", timezone_id="Asia/Shanghai",
+                  user_agent=UA)
         if browser_path:
             kw["executable_path"] = browser_path
-        self.b = self.p.chromium.launch(**kw)
-        self.ctx = self.b.new_context(
-            user_agent=UA,
-            viewport={"width": 1440, "height": 900},
-            locale="zh-CN",
-        )
+        # 持久化上下文：验证码过一次会记住
+        self.ctx = self.p.chromium.launch_persistent_context(**kw)
+        self.ctx.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN','zh']});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+        """)
         self.ctx.add_cookies([
             {"name": k, "value": str(v), "domain": ".douyin.com", "path": "/", "secure": True}
             for k, v in ck.items()
         ])
-        self.page = self.ctx.new_page()
+        self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
         self.page.set_default_timeout(45000)
         self.page.on("response", self._on_response)
 
@@ -106,6 +121,33 @@ class DouyinCrawler:
             return False
         self.page.wait_for_timeout(wait)
         return True
+
+    def is_captcha(self):
+        try:
+            title = self.page.title() or ""
+            body = self.page.evaluate("() => document.body.innerText.slice(0,200)") or ""
+        except Exception:
+            return False
+        return ("验证码" in title) or ("验证" in body and "登录" not in body[:20])
+
+    def wait_captcha(self, timeout=600, log=print):
+        """检测到验证码时：有头模式等用户手动过，无头模式直接提示"""
+        if not self.is_captcha():
+            return True
+        if self.headless:
+            log("⚠️ 抖音返回了验证码页（无头浏览器被识别）。")
+            log("   请用 --no-headless 重新运行，在弹出的浏览器窗口里手动过验证码，")
+            log("   过完脚本会自动继续（验证结果会记在 data/browser_profile 里）。")
+            return False
+        log("⚠️ 需要验证码：请在弹出的浏览器里手动完成验证，最多等 %d 秒…" % timeout)
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            self.page.wait_for_timeout(3000)
+            if not self.is_captcha():
+                log("✅ 验证通过，继续抓取")
+                return True
+        log("❌ 等待验证超时")
+        return False
 
     def click_follow_tab(self):
         """部分账号需要点一下「关注」才会加载列表"""
@@ -153,6 +195,7 @@ class DouyinCrawler:
             url = "https://www.douyin.com/user/self?showTab=following"
         if not self.goto(url):
             return []
+        self.wait_captcha()
         if not self.captured:
             self.click_follow_tab()
         users = self.harvest(scrolls=scrolls)
@@ -166,13 +209,17 @@ class DouyinCrawler:
 
     def close(self):
         try:
-            self.b.close()
-        finally:
+            self.ctx.close()
+        except Exception:
+            pass
+        try:
             self.p.stop()
+        except Exception:
+            pass
 
 
 def crawl(cookie_path, scrolls=3, max_expand=200, headless=True, browser_path=None,
-          log=print, state_path=None):
+          log=print, state_path=None, profile_dir=None):
     os.makedirs(DATA, exist_ok=True)
     store = Store(os.path.join(DATA, "douyin_users.jsonl"))
     state_path = state_path or os.path.join(DATA, "state.json")
@@ -185,7 +232,8 @@ def crawl(cookie_path, scrolls=3, max_expand=200, headless=True, browser_path=No
     visited = set(state.get("visited", []))
     log("已有 %d 条记录，已扩展 %d 个账号" % (store.count(), len(visited)))
 
-    c = DouyinCrawler(cookie_path, headless=headless, browser_path=browser_path, log=log)
+    c = DouyinCrawler(cookie_path, headless=headless, browser_path=browser_path, log=log,
+                      profile_dir=profile_dir)
     try:
         # 第一步：自己的关注列表
         if not state.get("self_done"):
